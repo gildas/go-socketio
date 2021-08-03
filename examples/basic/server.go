@@ -7,10 +7,20 @@ import (
 	"os"
 
 	"github.com/gildas/go-core"
+	"github.com/gildas/go-errors"
 	"github.com/gildas/go-logger"
 	"github.com/gildas/go-socketio"
 	"github.com/joho/godotenv"
 )
+
+var Log *logger.Logger
+
+func NotFoundHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Log.Errorf("Route not found %s", r.URL.String())
+		core.RespondWithError(w, http.StatusNotFound, errors.HTTPNotFound.With("path", r.URL.String()))
+	})
+}
 
 func main() {
 	_ = godotenv.Load()
@@ -19,30 +29,32 @@ func main() {
 	)
 	flag.Parse()
 
-	log := logger.Create("SERVER", &logger.StdoutStream{ Unbuffered: true })
-	defer log.Flush()
+	Log = logger.Create("SERVER", &logger.StdoutStream{ Unbuffered: true })
+	defer Log.Flush()
 
-	ioserver, err := socketio.NewServer()
+	ioserver, err := socketio.NewServer(&socketio.ServerOptions{
+		Logger: Log,
+	})
 	if err != nil {
-		log.Fatalf("Failed to create the Socket IO server")
+		Log.Fatalf("Failed to create the Socket IO server")
 		os.Exit(1)
 	}
 
 	ioserver.OnConnect("/", func (socket socketio.Socket) {
-		log.Infof("Connected to socket: %s", socket)
+		Log.Infof("Connected to socket: %s", socket)
 	})
 
 	ioserver.OnDisconnect("/", func (socket socketio.Socket) {
-		log.Infof("Disconnected from socket: %s", socket)
+		Log.Infof("Disconnected from socket: %s", socket)
 	})
 
 	ioserver.OnError("/", func (socket socketio.Socket, err error) {
-		log.Errorf("Received error...", err)
+		Log.Errorf("Received error...", err)
 	})
 
 	ioserver.On("/", "message", func (socket socketio.Socket, message string) {
-		log.Infof("Received: %s", message)
-		socket.emit("response", "Received: %s", message)
+		Log.Infof("Received: %s", message)
+		// socket.emit("response", "Received: %s", message)
 	})
 
 	go ioserver.Serve()
@@ -50,16 +62,16 @@ func main() {
 
 	server := &http.Server{
 		Addr:     fmt.Sprintf("0.0.0.0:%d", *port),
-		ErrorLog: log.AsStandardLog(logger.ERROR),
+		ErrorLog: Log.AsStandardLog(logger.ERROR),
 	}
 
 	http.Handle("/socket.io/", ioserver)
 	http.Handle("/", http.FileServer(http.Dir("static")))
 
-	log.Infof("Starting Web Server on port %d", *port)
+	Log.Infof("Starting Web Server on port %d", *port)
 	if err := server.ListenAndServe(); err != nil {
 		if err.Error() != "http: Server closed" {
-			log.Fatalf("Failed to start the WEB server on port: %d", *port, err)
+			Log.Fatalf("Failed to start the WEB server on port: %d", *port, err)
 			fmt.Fprintf(os.Stderr, "Failed to start the WEB server on port: %d. Error: %s", *port, err)
 			os.Exit(1)
 		}
